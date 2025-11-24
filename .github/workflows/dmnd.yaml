@@ -1,0 +1,64 @@
+# This is a support workflow for DMND.work's fork of `stratum-mining/sv2-tp` to build OCI
+# images for the project and deploy them to the repository when tags are pushed.
+#
+# The present suggestion assumes a `dmnd` branch in the `demand-open-source/sv2-tp`
+# repository and set to the default branch. Branch synchronizations with the upstream should
+# take special care to be made to `master`. When a new tag is observed to have been pushed
+# upstream, a developer should
+#   1. Pull the tag to their local repository.
+#   2. Rebase the `dmnd` branch against that tag, capturing the workflow definition.
+#   3. Push a new tag with the same name to the `demand-open-source/sv2-tp` repository which
+#      triggers the workflow.
+#
+# The workflow requires the following environment variables:
+#   - `AWS_ACCESS_KEY_ID`
+#   - `AWS_SECRET_ACCESS_KEY`
+#   - `AWS_REGION`
+#   - `PULUMI_ACCESS_TOKEN`
+#
+# The workflow also assumes a Pulumi stack named `demand-tech-org/sv2-tp/production` which is
+# writable by the given access token.
+
+name: DMND Deploy
+on:
+  # See: https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch
+  workflow_dispatch:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  deploy-oci-image:
+    name: Deploy OCI image
+    runs-on: ubuntu-24.04
+    steps:
+      - id: sanitize
+        run: |
+          IMAGE_TAG="$(echo "${GITHUB_REF_NAME}" | sed 's/\//-/g')"
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: deployment/package.json
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      - name: Install Node.js dependencies for frontend
+        run: npm ci --legacy-peer-deps
+        working-directory: deployment
+      - name: Install Node.js dependencies for Pulumi project
+        run: npm install
+        working-directory: deployment
+      - uses: pulumi/actions@v6
+        with:
+          command: up
+          config-map: |
+            sv2-tp:imageTag:
+              value: ${{ steps.sanitize.outputs.image_tag }}
+          stack-name: dmnd-tech-org/sv2-tp/production
+          work-dir: deployment
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
