@@ -14,8 +14,9 @@ Description=Stratum v2 Template Provider
 Documentation=https://github.com/stratum-mining/sv2-tp
 
 # https://www.freedesktop.org/wiki/Software/systemd/NetworkTarget/
-After=network-online.target
+After=network-online.target bitcoind.service
 Wants=network-online.target
+Requires=bitcoind.service
 
 [Service]
 ExecStart=/usr/bin/sv2-tp -pid=/run/bitcoin/sv2-tp.pid \
