@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - "*"
+      - '*-dmnd.*'
 
 jobs:
   deploy-oci-image:

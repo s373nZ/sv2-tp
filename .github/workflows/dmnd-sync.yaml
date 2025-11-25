@@ -1,0 +1,51 @@
+name: DMND Sync Upstream Tags
+on:
+  # schedule:
+  #   - cron: "*/15 * * * *" # Every 15 minutes
+  # See: https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch
+  workflow_dispatch:
+
+jobs:
+  check-tags:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream
+        run: |
+          git remote add upstream https://github.com/stratum-mining/sv2-tp.git
+          git fetch upstream --tags
+
+      - name: Get latest upstream tag
+        id: upstream_tag
+        run: |
+          TAG=$(git describe --tags $(git rev-list --tags --max-count=1) --abbrev=0 upstream | tail -n 1)
+          echo "Latest upstream tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Compare tags
+        id: compare
+        run: |
+          if [ "${{ steps.upstream_tag.outputs.tag }}" != "${{ steps.downstream_tag.outputs.tag }}" ]; then
+            echo "new_tag=yes" >> $GITHUB_OUTPUT
+          else
+            echo "new_tag=no" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Save upstream tag to file
+        run: echo "${{ steps.upstream_tag.outputs.tag }}" > upstream_tag.txt
+
+      - name: Upload tag artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-upstream-data
+          path: upstream_tag.txt
+
+    outputs:
+      new_tag: ${{ steps.compare.outputs.new_tag }}
+      upstream_tag: ${{ steps.upstream_tag.outputs.tag }}
