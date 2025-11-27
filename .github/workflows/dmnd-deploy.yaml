@@ -1,15 +1,6 @@
 # This is a support workflow for DMND.work's fork of `stratum-mining/sv2-tp` to build OCI
 # images for the project and deploy them to the repository when tags are pushed.
 #
-# The present suggestion assumes a `dmnd` branch in the `demand-open-source/sv2-tp`
-# repository and set to the default branch. Branch synchronizations with the upstream should
-# take special care to be made to `master`. When a new tag is observed to have been pushed
-# upstream, a developer should
-#   1. Pull the tag to their local repository.
-#   2. Rebase the `dmnd` branch against that tag, capturing the workflow definition.
-#   3. Push a new tag with the same name to the `demand-open-source/sv2-tp` repository which
-#      triggers the workflow.
-#
 # The workflow requires the following environment variables:
 #   - `AWS_ACCESS_KEY_ID`
 #   - `AWS_SECRET_ACCESS_KEY`
@@ -48,9 +39,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       - name: Install Node.js dependencies for frontend
         run: npm ci --legacy-peer-deps
-        working-directory: deployment
-      - name: Install Node.js dependencies for Pulumi project
-        run: npm install
         working-directory: deployment
       - uses: pulumi/actions@v6
         with:

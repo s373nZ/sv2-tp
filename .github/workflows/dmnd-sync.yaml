@@ -1,9 +1,20 @@
+# This is a support workflow for DMND.work's fork of `stratum-mining/sv2-tp` to scan the
+# upstream for new tags and then merge in our own CI/CD workflow and support files and
+# then publish a new downstream tag in the format `${UPSTREAM_TAG}-dmnd.N`. Once this tag is
+# pushed, the `dmnd-deploy.yaml` is triggered for each new tag which to deploy an image.
+#
+# GitHub doesn't usually allow automated commits which add new workflows to a project, so
+# we follow the recommended override by resetting the `origin` remote url to include a
+# Personal Access Token (PAT) which has been created with read/write permissions to both
+# `content` and `workflows`. The token is expected to be configured as a repository secret
+# named `PAT_TOKEN`.
+
 name: DMND Sync Upstream Tags
 on:
-  # schedule:
-  #   - cron: "*/15 * * * *" # Every 15 minutes
+  schedule:
+    - cron: "* */12 * * *" # Every 12 hours
   # See: https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 jobs:
   check-tags:
@@ -14,38 +25,80 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 0
 
-      - name: Add upstream
+      - name: Scan upstream tags
         run: |
+          UPSTREAM_TAGS=$(git ls-remote --tags https://github.com/stratum-mining/sv2-tp.git \
+            | grep -v '\^{}' \
+            | grep -oE 'refs/tags/v[0-9]+\.[0-9]+(\.[0-9]+)?' \
+            | sed 's#refs/tags/##' \
+            | sort -V)
+          echo "UPSTREAM_TAGS:"
+          echo "$UPSTREAM_TAGS"
+
+          TAGS=$(git tag -l \
+            | sed -E 's/-dmnd\.[0-9]+//g' \
+            | sort -V)
+          echo "TAGS:"
+          echo "$TAGS"
+
+          MISSING_TAGS=$(comm -23 \
+            <(echo "$UPSTREAM_TAGS" | sort) \
+            <(echo "$TAGS"    | sort) \
+            | sort -V)
+          echo "MISSING_TAGS:"
+          echo "$MISSING_TAGS"
+
+          if [ -z "$MISSING_TAGS" ]; then
+            echo "No missing tags. Exiting."
+            exit 0
+          fi
+
+          # Backup the pipeline and deployment to patch into upstream tags.
+          cp .github/workflows/dmnd-deploy.yaml /tmp/dmnd-deploy.yaml
+          cp Dockerfile /tmp/Dockerfile.dmnd
+          cp -R deployment /tmp/dmnd-deployment
+
+          # Fetch tags from upstream.
           git remote add upstream https://github.com/stratum-mining/sv2-tp.git
           git fetch upstream --tags
 
-      - name: Get latest upstream tag
-        id: upstream_tag
-        run: |
-          TAG=$(git describe --tags $(git rev-list --tags --max-count=1) --abbrev=0 upstream | tail -n 1)
-          echo "Latest upstream tag: $TAG"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Rewrite the origin url to use a fine-grained personal access token, `PAT_TOKEN`,
+          # which has been created with permissions:
+          #   content: write
+          #   workflows: write
+          #
+          # This allows us to commit protected workflows into the downstream Git tag.
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          echo "PAT_TOKEN: ${{ secrets.PAT_TOKEN }}"
+          git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
 
-      - name: Compare tags
-        id: compare
-        run: |
-          if [ "${{ steps.upstream_tag.outputs.tag }}" != "${{ steps.downstream_tag.outputs.tag }}" ]; then
-            echo "new_tag=yes" >> $GITHUB_OUTPUT
-          else
-            echo "new_tag=no" >> $GITHUB_OUTPUT
-          fi
+          while IFS= read -r TAG; do
+            echo "Missing tag found: $TAG"
 
-      - name: Save upstream tag to file
-        run: echo "${{ steps.upstream_tag.outputs.tag }}" > upstream_tag.txt
+            # Compute downstream tag, e.g. append -dmnd.N
+            DMND_COUNT=$(git tag -l "${TAG}-dmnd.*" | wc -l)
+            NEW_TAG="${TAG}-dmnd.$((DMND_COUNT + 1))"
 
-      - name: Upload tag artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sync-upstream-data
-          path: upstream_tag.txt
+            git checkout "$TAG"
+            git switch -c "$NEW_TAG-wip"
 
-    outputs:
-      new_tag: ${{ steps.compare.outputs.new_tag }}
-      upstream_tag: ${{ steps.upstream_tag.outputs.tag }}
+            # Copy the deploy workflow
+            cp /tmp/dmnd-deploy.yaml .github/workflows/dmnd-deploy.yaml
+            cp /tmp/Dockerfile.dmnd Dockerfile
+            git add .github/workflows/dmnd-deploy.yaml Dockerfile
+
+            # Copy the Pulumi deployment implementation
+            cp -R /tmp/dmnd-deployment deployment
+            git add deployment
+
+            git commit -m "Merging DMND downstream workflows into upstream $NEW_TAG"
+
+            echo "Tagging $NEW_TAG"
+            git tag "$NEW_TAG"
+            echo "Pushing tag..."
+            git push origin "$NEW_TAG"
+          done <<< "$MISSING_TAGS"
